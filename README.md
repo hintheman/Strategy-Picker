@@ -116,7 +116,9 @@ Pine v6 requires `alertcondition()` messages to be constant strings, so old/new 
   - If it says `Debit Trade`, think in terms of directional calls/puts or debit spreads.  
   - If it says `Pause for reckoning and coffee`, respect the chop and reduce risk.
 
-License
+***
+
+## License
+
 This project is licensed under the terms of the MIT License.
 
-***
