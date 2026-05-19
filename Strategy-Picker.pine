@@ -1,0 +1,166 @@
+//@version=6
+indicator("Strategy Picker v1.1", overlay=false, max_lines_count=200, max_labels_count=200)
+
+//===== INPUTS =====//
+fastLen    = input.int(12,  "MACD Fast Length",   minval=1)
+slowLen    = input.int(26,  "MACD Slow Length",   minval=1)
+sigLen     = input.int(9,   "MACD Signal Length", minval=1)
+emaLen     = input.int(8,   "EMA Length",         minval=1)
+
+adxLen     = input.int(14,  "ADX Length",         minval=1)
+adxTrendTh = input.float(20,"ADX Trend Threshold")
+
+vixLowTh   = input.float(16,"VIX Low (Debit)",    step=0.1)
+vixICLow   = input.float(16,"VIX IC Low",         step=0.1)
+vixICHigh  = input.float(19,"VIX IC High",        step=0.1)
+vixCSHigh  = input.float(19,"VIX CS Threshold",   step=0.1)
+
+useIronCondor = input.bool(true,  "Allow Iron Condor when Neutral")
+skipWait      = input.bool(false, "Skip wait period at open?")
+waitBars      = input.int(2, "Bars to wait after RTH open", minval=0, maxval=10)
+
+//===== TIME INFO (ASSUMES US RTH 09:30–16:00 ET) =====//
+isNewDay   = ta.change(time("D")) != 0
+var int rthBarCount = 0
+
+inSession = session.ismarket
+
+if isNewDay
+    rthBarCount := 0
+if inSession and barstate.isnew
+    rthBarCount += 1
+
+//===== 15m MACD & EMA =====//
+[macd15, signal15, _] = ta.macd(close, fastLen, slowLen, sigLen)
+ema15  = ta.ema(close, emaLen)
+
+//===== 60m MACD & EMA via request.security =====//
+[macd60, signal60, _] = request.security(syminfo.tickerid, "60",
+     ta.macd(close, fastLen, slowLen, sigLen))
+ema60     = request.security(syminfo.tickerid, "60", ta.ema(close, emaLen))
+tf60Close = request.security(syminfo.tickerid, "60", close)
+
+//===== Helper for bull/bear/neutral on a TF =====//
+f_tfState(_macd, _signal, _close, _ema) =>
+    bull = _macd > 0 and _macd > _signal and _close > _ema
+    bear = _macd < 0 and _macd < _signal and _close < _ema
+    bull ? 1 : bear ? -1 : 0
+
+tf15State = f_tfState(macd15,  signal15,  close,     ema15)
+tf60State = f_tfState(macd60,  signal60,  tf60Close, ema60)
+
+//===== Raw combined state: 1 bull, -1 bear, 0 neutral =====//
+rawState = tf60State == 1  and tf15State == 1  ?  1 :
+           tf60State == -1 and tf15State == -1 ? -1 : 0
+
+//===== 2-BAR CONFIRMED TRENDSTATE =====//
+var int trendState    = 0  // 1 bull, -1 bear, 0 neutral
+var int rawStatePrev  = 0
+var int sameCount     = 0
+
+if barstate.isnew
+    if rawState == rawStatePrev
+        sameCount += 1
+    else
+        sameCount    := 1
+        rawStatePrev := rawState
+
+    if sameCount >= 2
+        trendState := rawState
+
+//===== ADX (15m) =====//
+[diplus, diminus, adxVal] = ta.dmi(adxLen, adxLen)
+
+//===== VIX (15m close) =====//
+vixClose = request.security("TVC:VIX", "15", close)
+
+//===== STRATEGY PICKER LOGIC =====//
+
+f_trendText(_ts) =>
+    _ts == 1 ? "Bull" : _ts == -1 ? "Bear" : "Neutral"
+
+// persistent vars for display
+var string strategy   = "Pause for reckoning and coffee"
+var string trendText  = "Neutral"
+var string oldStrategy = strategy  // keep last confirmed strategy text
+
+if barstate.isconfirmed
+    trendText := f_trendText(trendState)
+
+    // track previous strategy before we change it
+    oldStrategy := strategy
+
+    // Wait-period logic (only if skipWait is false)
+    waitActive = (rthBarCount <= waitBars and not skipWait)
+
+    if waitActive or not inSession
+        strategy := "Pause for reckoning and coffee"
+    else
+        // Strong trends with ADX + VIX -> Credit Spreads
+        if trendState == 1 and adxVal >= adxTrendTh and vixClose >= vixCSHigh
+            strategy := "Bull with PCS"
+        else if trendState == -1 and adxVal >= adxTrendTh and vixClose >= vixCSHigh
+            strategy := "Bear with CCS"
+
+        // Neutral trend logic
+        else if trendState == 0
+            if vixClose < vixLowTh
+                strategy := "Debit Trade"
+            else if useIronCondor and vixClose >= vixICLow and vixClose <= vixICHigh and adxVal < adxTrendTh
+                strategy := "Neutral with Iron Condor"
+            else
+                strategy := "Pause for reckoning and coffee"
+
+        // Fallbacks when trend strong but VIX below CS threshold
+        else if trendState == 1
+            strategy := "Debit Trade"
+        else if trendState == -1
+            strategy := "Debit Trade"
+
+//===== PLOTTING =====//
+
+// TrendState (numeric) – you can hide this plot in the Style tab if you want
+plot(trendState,
+     title="TrendState (1=Bull, -1=Bear, 0=Neutral)",
+     color=color.new(color.blue, 0))
+
+// ADX line + threshold with descriptive titles
+plot(adxVal,
+     title="ADX (trend strength)",
+     color=color.orange)
+hline(adxTrendTh,
+      "ADX Threshold (trend vs range)",
+      color=color.new(color.orange, 70))
+
+// Table: Trend / Strategy / ADX / VIX
+var table t = table.new(position.top_left, 3, 2, border_width=1)
+if barstate.islast
+    // row 0: trend + ADX
+    table.cell(t, 0, 0, "Trend",    text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(t, 1, 0, trendText,  text_color=color.white)
+    table.cell(t, 2, 0, "ADX: " + str.tostring(adxVal, format.mintick), text_color=color.orange)
+
+    // row 1: strategy + VIX
+    table.cell(t, 0, 1, "Strategy", text_color=color.white, bgcolor=color.new(color.green, 70))
+    table.cell(t, 1, 1, strategy,   text_color=color.white)
+    table.cell(t, 2, 1, "VIX: " + str.tostring(vixClose, format.mintick), text_color=color.white)
+
+//===== ALERTS =====//
+
+// 1) Alert when strategy changes
+string strategyPrev = oldStrategy
+strategyChanged = strategy != strategyPrev
+
+// All we can pass is a constant message; old/new are visible in code and logs
+alertcondition(strategyChanged,
+     title   = "Strategy Changed",
+     message = "Strategy Picker: strategy changed")
+
+// 2) Trend change alert (before -> after)
+trendPrev     = nz(trendState[1], 0)
+trendPrevText = f_trendText(trendPrev)
+trendChanged  = trendState != trendPrev
+
+alertcondition(trendChanged,
+     title   = "Trend Change",
+     message = "Strategy Picker: trend changed")
