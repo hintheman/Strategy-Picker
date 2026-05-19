@@ -204,10 +204,16 @@ if barstate.islast
 
 //===== ALERTS =====//
 
+//===== ALERTS =====//
 string strategyPrev = oldStrategy
-strategyChanged = strategy != strategyPrev
-alertcondition(strategyChanged, title="Strategy Changed", message="Strategy Picker: strategy changed")
+bool strategyChanged = strategy != strategyPrev
 
-trendPrev    = nz(trendState[1], 0)
-trendChanged = trendState != trendPrev
-alertcondition(trendChanged, title="Trend Change", message="Strategy Picker: trend changed")
+if barstate.isconfirmed and strategyChanged
+    alert("Strategy Picker | " + syminfo.ticker + " | Prev: " + strategyPrev + " → Now: " + strategy, alert.freq_once_per_bar_close)
+
+
+int trendPrev     = nz(trendState[1], 0)
+bool trendChanged = trendState != trendPrev
+
+if barstate.isconfirmed and trendChanged
+    alert("Strategy Picker | " + syminfo.ticker + " | Trend: " + f_trendText(trendPrev) + " → " + trendText, alert.freq_once_per_bar_close)
