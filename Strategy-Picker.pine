@@ -1,9 +1,9 @@
 // © Hin + Claude
-// Strategy Picker v1.3 — Fixed Neutral/Pause bug, added ADX trend fallback,
-// added 60m TF bias as primary trend signal, expanded table with TF detail.
+// Strategy Picker v1.4 — Added VIX mid-zone for partial CCS/PCS,
+// ADX+VIX combined gate for credit spreads.
 
 //@version=6
-indicator("Strategy Picker v1.3", overlay=false, max_lines_count=200, max_labels_count=200)
+indicator("Strategy Picker v1.4", overlay=false, max_lines_count=200, max_labels_count=200)
 
 
 //===== INPUTS =====//
@@ -15,16 +15,18 @@ emaLen     = input.int(8,   "EMA Length",         minval=1,   group="MACD / EMA"
 adxLen     = input.int(14,  "ADX Length",         minval=1,   group="ADX")
 adxTrendTh = input.float(20,"ADX Trend Threshold",            group="ADX")
 
-vixLowTh   = input.float(16,"VIX Low (Debit)",    step=0.1,  group="VIX Thresholds")
-vixICLow   = input.float(16,"VIX IC Low",         step=0.1,  group="VIX Thresholds")
-vixICHigh  = input.float(19,"VIX IC High",        step=0.1,  group="VIX Thresholds")
-vixCSHigh  = input.float(19,"VIX CS Threshold",   step=0.1,  group="VIX Thresholds")
+vixLowTh      = input.float(16, "VIX Low  → Debit only",          step=0.1, group="VIX Thresholds")
+vixICLow      = input.float(16, "VIX IC Low",                      step=0.1, group="VIX Thresholds")
+vixICHigh     = input.float(19, "VIX IC High",                     step=0.1, group="VIX Thresholds")
+// NEW: two-tier CS thresholds
+vixCSMid      = input.float(18, "VIX Mid  → CS (ADX required)",    step=0.1, group="VIX Thresholds",
+                 tooltip="When VIX is between Mid and High AND ADX is trending, allow credit spread at reduced size.")
+vixCSHigh     = input.float(19, "VIX High → CS (full size)",       step=0.1, group="VIX Thresholds",
+                 tooltip="VIX at or above this level = full-size credit spread regardless of ADX.")
 
 useIronCondor = input.bool(true,  "Allow Iron Condor when Neutral", group="Options")
 skipWait      = input.bool(false, "Skip wait period at open?",      group="Options")
 waitBars      = input.int(2,      "Bars to wait after RTH open", minval=0, maxval=10, group="Options")
-
-// NEW: 60m bias as primary trend signal when 15m/60m disagree
 use60mBias    = input.bool(true,  "Use 60m as primary trend when TFs disagree", group="Options")
 
 
@@ -61,7 +63,6 @@ tf60State = f_tfState(macd60, signal60, tf60Close, ema60)
 
 
 //===== Raw combined state =====//
-// FIX: when TFs disagree and use60mBias=true, trust the 60m direction
 rawState = tf60State == 1  and tf15State == 1  ?  1 :
            tf60State == -1 and tf15State == -1 ? -1 :
            use60mBias and tf60State != 0        ? tf60State : 0
@@ -85,14 +86,22 @@ if barstate.isnew
 //===== ADX (15m) =====//
 [diplus, diminus, adxVal] = ta.dmi(adxLen, adxLen)
 bool adxTrending = adxVal >= adxTrendTh
-
-// ADX-based directional bias (DI+/DI- shows which way ADX is trending)
-// FIX: use DI+/DI- to determine direction when trendState is stuck at 0
-int adxBias = diplus > diminus ? 1 : diplus < diminus ? -1 : 0
+int  adxBias     = diplus > diminus ? 1 : diplus < diminus ? -1 : 0
 
 
 //===== VIX (15m close) =====//
 vixClose = request.security("TVC:VIX", "15", close)
+
+
+//===== VIX tier helpers =====//
+// Full CS: VIX >= vixCSHigh (premium is high, no extra requirements)
+// Mid  CS: VIX >= vixCSMid AND ADX trending (lower premium but trend confirms direction)
+// Debit:   VIX < vixLowTh
+f_csAllowed(_vix, _adxTrending) =>
+    _vix >= vixCSHigh or (_vix >= vixCSMid and _adxTrending)
+
+f_csLabel(_vix) =>
+    _vix >= vixCSHigh ? "" : " (reduced size)"
 
 
 //===== STRATEGY PICKER LOGIC =====//
@@ -113,18 +122,20 @@ if barstate.isconfirmed
     if waitActive or not inSession
         strategy := "Pause for reckoning and coffee"
     else
-        // ── Effective trend: use trendState, fall back to ADX bias if Neutral ──
-        // FIX: when MACD/EMA says Neutral but ADX is strong, use DI+/DI- bias
+        // Effective trend: confirmed MACD/EMA, fall back to ADX DI bias if Neutral
         effectiveTrend = trendState != 0 ? trendState :
                          (adxTrending   ? adxBias    : 0)
 
-        // Strong trend + high VIX → Credit Spreads
-        if effectiveTrend == 1 and adxTrending and vixClose >= vixCSHigh
-            strategy := "Bull with PCS"
-        else if effectiveTrend == -1 and adxTrending and vixClose >= vixCSHigh
-            strategy := "Bear with CCS"
+        csOk    = f_csAllowed(vixClose, adxTrending)
+        csLabel = f_csLabel(vixClose)
 
-        // Neutral (no trend, no ADX bias)
+        // Strong trend direction → Credit Spreads (full or reduced)
+        if effectiveTrend == 1 and adxTrending and csOk
+            strategy := "Bull with PCS" + csLabel
+        else if effectiveTrend == -1 and adxTrending and csOk
+            strategy := "Bear with CCS" + csLabel
+
+        // Neutral (no trend signal)
         else if effectiveTrend == 0
             if vixClose < vixLowTh
                 strategy := "Debit Trade"
@@ -133,7 +144,7 @@ if barstate.isconfirmed
             else
                 strategy := "Pause for reckoning and coffee"
 
-        // Trending but VIX below CS threshold → Debit or trend follow
+        // Trending but CS not allowed → directional debit
         else if effectiveTrend == 1
             strategy := adxTrending ? "Bull Debit / Trend Follow" : "Debit Trade"
         else if effectiveTrend == -1
@@ -154,14 +165,14 @@ hline(adxTrendTh,
       "ADX Threshold (trend vs range)",
       color=color.new(color.orange, 70))
 
-// Table: 4 rows — TF states, trend, ADX/VIX, strategy
+// 4-row table
 var table t = table.new(position.top_left, 3, 4, border_width=1)
 if barstate.islast
-    // row 0: TF alignment detail (NEW — shows why Neutral or Bull/Bear)
-    tf15Txt = tf15State == 1 ? "Bull" : tf15State == -1 ? "Bear" : "Neut"
-    tf60Txt = tf60State == 1 ? "Bull" : tf60State == -1 ? "Bear" : "Neut"
+    tf15Txt   = tf15State == 1 ? "Bull" : tf15State == -1 ? "Bear" : "Neut"
+    tf60Txt   = tf60State == 1 ? "Bull" : tf60State == -1 ? "Bear" : "Neut"
     tf15Color = tf15State == 1 ? color.new(color.green, 60) : tf15State == -1 ? color.new(color.red, 60) : color.new(color.gray, 70)
     tf60Color = tf60State == 1 ? color.new(color.green, 60) : tf60State == -1 ? color.new(color.red, 60) : color.new(color.gray, 70)
+
     table.cell(t, 0, 0, "15m",   text_color=color.white, bgcolor=tf15Color)
     table.cell(t, 1, 0, tf15Txt, text_color=color.white, bgcolor=tf15Color)
     table.cell(t, 2, 0, "DI+:" + str.tostring(diplus, "#.0") + " DI-:" + str.tostring(diminus, "#.0"), text_color=color.white)
@@ -170,13 +181,11 @@ if barstate.islast
     table.cell(t, 1, 1, tf60Txt, text_color=color.white, bgcolor=tf60Color)
     table.cell(t, 2, 1, "ADX Bias: " + (adxBias == 1 ? "Bull ▲" : adxBias == -1 ? "Bear ▼" : "Flat"), text_color=color.white)
 
-    // row 2: confirmed trend + ADX
     trendBgColor = trendState == 1 ? color.new(color.green, 70) : trendState == -1 ? color.new(color.red, 70) : color.new(color.blue, 70)
     table.cell(t, 0, 2, "Trend",    text_color=color.white, bgcolor=trendBgColor)
     table.cell(t, 1, 2, trendText,  text_color=color.white)
     table.cell(t, 2, 2, "ADX: " + str.tostring(adxVal, format.mintick) + (adxTrending ? " 🔥" : " –"), text_color=color.orange)
 
-    // row 3: strategy + VIX
     table.cell(t, 0, 3, "Strategy", text_color=color.white, bgcolor=color.new(color.green, 70))
     table.cell(t, 1, 3, strategy,   text_color=color.white)
     table.cell(t, 2, 3, "VIX: " + str.tostring(vixClose, format.mintick), text_color=color.white)
