@@ -1,8 +1,9 @@
 // © Hin + Claude
-// Strategy Picker v1.5 — Added Iron Butterfly in mid-high VIX neutral zone.
+// Strategy Picker v1.7 — Credit Spreads default to 0 DTE. Debit Spreads 14 DTE.
+// added DTE guidance in strategy text, refined debit conditions.
 
 //@version=6
-indicator("Strategy Picker v1.5", overlay=false, max_lines_count=200, max_labels_count=200)
+indicator("Strategy Picker v1.7", overlay=false, max_lines_count=200, max_labels_count=200)
 
 
 //===== INPUTS =====//
@@ -14,27 +15,24 @@ emaLen     = input.int(8,   "EMA Length",         minval=1,   group="MACD / EMA"
 adxLen     = input.int(14,  "ADX Length",         minval=1,   group="ADX")
 adxTrendTh = input.float(20,"ADX Trend Threshold",            group="ADX")
 
-// ── VIX Thresholds ──────────────────────────────────────────
-// Debit zone
-vixLowTh   = input.float(16, "VIX Low  → Debit only",             step=0.1, group="VIX Thresholds")
-// Iron Condor zone
-vixICLow   = input.float(16, "VIX IC Low",                         step=0.1, group="VIX Thresholds")
-vixICHigh  = input.float(19, "VIX IC High",                        step=0.1, group="VIX Thresholds")
-// Iron Butterfly zone (above IC, below full CS)
-vixIBFLow  = input.float(19, "VIX IBF Low  → Iron Butterfly",      step=0.1, group="VIX Thresholds",
-              tooltip="When VIX is between IBF Low and IBF High, neutral trend, ADX not trending → Iron Butterfly.")
-vixIBFHigh = input.float(23, "VIX IBF High → Iron Butterfly cap",  step=0.1, group="VIX Thresholds",
-              tooltip="Above this VIX, premium is too rich for IBF body risk — prefer CS instead.")
-// Credit Spread zone
-vixCSMid   = input.float(18, "VIX Mid  → CS (ADX required)",       step=0.1, group="VIX Thresholds",
-              tooltip="Trending + VIX >= Mid: credit spread at reduced size.")
-vixCSHigh  = input.float(19, "VIX High → CS (full size)",          step=0.1, group="VIX Thresholds")
+vixLowTh    = input.float(16, "VIX Low  → Debit only",             step=0.1, group="VIX Thresholds")
+vixICLow    = input.float(16, "VIX IC Low",                         step=0.1, group="VIX Thresholds")
+vixICHigh   = input.float(19, "VIX IC High",                        step=0.1, group="VIX Thresholds")
+vixIBFLow   = input.float(19, "VIX IBF Low  → Iron Butterfly",      step=0.1, group="VIX Thresholds")
+vixIBFHigh  = input.float(23, "VIX IBF High → Iron Butterfly cap",  step=0.1, group="VIX Thresholds")
+vixCSMid    = input.float(18, "VIX Mid  → CS (ADX required)",       step=0.1, group="VIX Thresholds")
+vixCSHigh   = input.float(19, "VIX High → CS (full size)",          step=0.1, group="VIX Thresholds")
 
-useIronCondor   = input.bool(true,  "Allow Iron Condor",            group="Options")
-useIronButterfly= input.bool(true,  "Allow Iron Butterfly",         group="Options")
-skipWait        = input.bool(false, "Skip wait period at open?",    group="Options")
-waitBars        = input.int(2,      "Bars to wait after RTH open",  minval=0, maxval=10, group="Options")
-use60mBias      = input.bool(true,  "Use 60m as primary trend when TFs disagree", group="Options")
+// DTE guidance shown in strategy label
+dteCreditSpread = input.int(0,  "DTE — Credit Spreads (0 DTE)",    minval=0, maxval=10,  group="DTE Guidance")
+dteIronWings    = input.int(5,  "DTE — IC / IBF (3–7 DTE)",          minval=1, maxval=14,  group="DTE Guidance")
+dteDebit        = input.int(14, "DTE — Debit Spreads (14–21 DTE)",   minval=7, maxval=45,  group="DTE Guidance")
+
+useIronCondor    = input.bool(true,  "Allow Iron Condor",                       group="Options")
+useIronButterfly = input.bool(true,  "Allow Iron Butterfly",                    group="Options")
+skipWait         = input.bool(false, "Skip wait period at open?",               group="Options")
+waitBars         = input.int(2,      "Bars to wait after RTH open", minval=0, maxval=10, group="Options")
+use60mBias       = input.bool(true,  "Use 60m as primary trend when TFs disagree", group="Options")
 
 
 //===== TIME INFO =====//
@@ -98,12 +96,15 @@ int  adxBias     = diplus > diminus ? 1 : diplus < diminus ? -1 : 0
 vixClose = request.security("TVC:VIX", "15", close)
 
 
-//===== VIX tier helpers =====//
+//===== Helpers =====//
 f_csAllowed(_vix, _adxTrending) =>
     _vix >= vixCSHigh or (_vix >= vixCSMid and _adxTrending)
 
 f_csLabel(_vix) =>
     _vix >= vixCSHigh ? "" : " (reduced size)"
+
+f_dteTag(_dte) =>
+    _dte == 0 ? " [0 DTE — same day]" : " [" + str.tostring(_dte) + " DTE]"
 
 
 //===== STRATEGY PICKER =====//
@@ -129,41 +130,37 @@ if barstate.isconfirmed
 
         csOk    = f_csAllowed(vixClose, adxTrending)
         csLabel = f_csLabel(vixClose)
+        dteCS   = f_dteTag(dteCreditSpread)
+        dteIW   = f_dteTag(dteIronWings)
+        dteDbt  = f_dteTag(dteDebit)
 
-        // ── Credit Spreads (trending + VIX elevated) ──────────
+        // ── Credit Spreads ─────────────────────────────────────
         if effectiveTrend == 1 and adxTrending and csOk
-            strategy := "Bull with PCS" + csLabel
+            strategy := "Bull Put Credit Spread (PCS)" + csLabel + dteCS
         else if effectiveTrend == -1 and adxTrending and csOk
-            strategy := "Bear with CCS" + csLabel
+            strategy := "Bear Call Credit Spread (CCS)" + csLabel + dteCS
 
-        // ── Neutral zone ──────────────────────────────────────
+        // ── Neutral / Range-bound ──────────────────────────────
         else if effectiveTrend == 0
             if vixClose < vixLowTh
-                // VIX too low → buy premium directionally
-                strategy := "Debit Trade"
-
-            else if useIronButterfly and not adxTrending
-                         and vixClose >= vixIBFLow and vixClose <= vixIBFHigh
-                // VIX mid-high + tight range → IBF for max ATM premium
-                strategy := "Neutral with Iron Butterfly"
-
-            else if useIronCondor and not adxTrending
-                         and vixClose >= vixICLow and vixClose <= vixICHigh
-                // VIX moderate + range-bound → IC for wider wings
-                strategy := "Neutral with Iron Condor"
-
+                // Low VIX + no direction = small debit, go ATM directional if any bias
+                strategy := adxBias == 1  ? "Bull Call Debit Spread" + dteDbt :
+                             adxBias == -1 ? "Bear Put Debit Spread"  + dteDbt :
+                             "Debit Spread (wait for direction)" + dteDbt
+            else if useIronButterfly and not adxTrending and vixClose >= vixIBFLow and vixClose <= vixIBFHigh
+                strategy := "Neutral — Iron Butterfly" + dteIW
+            else if useIronCondor and not adxTrending and vixClose >= vixICLow and vixClose <= vixICHigh
+                strategy := "Neutral — Iron Condor" + dteIW
             else if vixClose > vixIBFHigh and not adxTrending
-                // VIX very high but no trend — too risky for short premium body
                 strategy := "Pause for reckoning and coffee"
-
             else
                 strategy := "Pause for reckoning and coffee"
 
-        // ── Trending but CS not cleared → directional debit ───
+        // ── Trending but VIX below CS floor → directional debit ──
         else if effectiveTrend == 1
-            strategy := adxTrending ? "Bull Debit / Trend Follow" : "Debit Trade"
+            strategy := adxTrending ? "Bull Call Debit Spread" + dteDbt : "Bull Call Debit Spread (weak)" + dteDbt
         else if effectiveTrend == -1
-            strategy := adxTrending ? "Bear Debit / Trend Follow" : "Debit Trade"
+            strategy := adxTrending ? "Bear Put Debit Spread"  + dteDbt : "Bear Put Debit Spread (weak)"  + dteDbt
 
 
 //===== PLOTTING =====//
@@ -177,7 +174,7 @@ plot(adxVal,
      color=color.orange)
 
 hline(adxTrendTh,
-      "ADX Threshold (trend vs range)",
+      "ADX Threshold",
       color=color.new(color.orange, 70))
 
 var table t = table.new(position.top_left, 3, 4, border_width=1)
