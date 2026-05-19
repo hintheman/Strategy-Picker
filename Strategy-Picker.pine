@@ -1,5 +1,5 @@
 //@version=6
-indicator("Strategy Picker v1.1", overlay=false, max_lines_count=200, max_labels_count=200)
+indicator("Strategy Picker v1.2", overlay=false, max_lines_count=200, max_labels_count=200)
 
 //===== INPUTS =====//
 fastLen    = input.int(12,  "MACD Fast Length",   minval=1)
