@@ -177,32 +177,42 @@ hline(adxTrendTh,
       "ADX Threshold",
       color=color.new(color.orange, 70))
 
-var table t = table.new(position.top_left, 3, 4, border_width=1)
+
+ 
+var table t = table.new(position.top_left, 3, 5, border_width=1)
+
 if barstate.islast
+
     tf15Txt   = tf15State == 1 ? "Bull" : tf15State == -1 ? "Bear" : "Neut"
     tf60Txt   = tf60State == 1 ? "Bull" : tf60State == -1 ? "Bear" : "Neut"
     tf15Color = tf15State == 1 ? color.new(color.green, 60) : tf15State == -1 ? color.new(color.red, 60) : color.new(color.gray, 70)
     tf60Color = tf60State == 1 ? color.new(color.green, 60) : tf60State == -1 ? color.new(color.red, 60) : color.new(color.gray, 70)
+    
+    // ── SPACER ROW (row 0) ──
+    table.cell(t, 0, 0, "")
+    table.cell(t, 1, 0, "")
+    table.cell(t, 2, 0, "")
 
-    table.cell(t, 0, 0, "15m",   text_color=color.white, bgcolor=tf15Color)
-    table.cell(t, 1, 0, tf15Txt, text_color=color.white, bgcolor=tf15Color)
-    table.cell(t, 2, 0, "DI+:" + str.tostring(diplus, "#.0") + " DI-:" + str.tostring(diminus, "#.0"), text_color=color.white)
+    // ── 15m (row 1) ──
+    table.cell(t, 0, 1, "15m",   text_color=color.white, bgcolor=tf15Color)
+    table.cell(t, 1, 1, tf15Txt, text_color=color.white, bgcolor=tf15Color)
+    table.cell(t, 2, 1, "DI+:" + str.tostring(diplus, "#.0") + " DI-:" + str.tostring(diminus, "#.0"), text_color=color.white)
 
-    table.cell(t, 0, 1, "60m",   text_color=color.white, bgcolor=tf60Color)
-    table.cell(t, 1, 1, tf60Txt, text_color=color.white, bgcolor=tf60Color)
-    table.cell(t, 2, 1, "ADX Bias: " + (adxBias == 1 ? "Bull ▲" : adxBias == -1 ? "Bear ▼" : "Flat"), text_color=color.white)
+    // ── 60m (row 2) ──
+    table.cell(t, 0, 2, "60m",   text_color=color.white, bgcolor=tf60Color)
+    table.cell(t, 1, 2, tf60Txt, text_color=color.white, bgcolor=tf60Color)
+    table.cell(t, 2, 2, "ADX Bias: " + (adxBias == 1 ? "Bull ▲" : adxBias == -1 ? "Bear ▼" : "Flat"), text_color=color.white)
 
+    // ── Trend (row 3) ──
     trendBgColor = trendState == 1 ? color.new(color.green, 70) : trendState == -1 ? color.new(color.red, 70) : color.new(color.blue, 70)
-    table.cell(t, 0, 2, "Trend",    text_color=color.white, bgcolor=trendBgColor)
-    table.cell(t, 1, 2, trendText,  text_color=color.white)
-    table.cell(t, 2, 2, "ADX: " + str.tostring(adxVal, format.mintick) + (adxTrending ? " 🔥" : " –"), text_color=color.orange)
+    table.cell(t, 0, 3, "Trend",    text_color=color.white, bgcolor=trendBgColor)
+    table.cell(t, 1, 3, trendText,  text_color=color.white)
+    table.cell(t, 2, 3, "ADX: " + str.tostring(adxVal, format.mintick) + (adxTrending ? " 🔥" : " –"), text_color=color.orange)
 
-    table.cell(t, 0, 3, "Strategy", text_color=color.white, bgcolor=color.new(color.green, 70))
-    table.cell(t, 1, 3, strategy,   text_color=color.white)
-    table.cell(t, 2, 3, "VIX: " + str.tostring(vixClose, format.mintick), text_color=color.white)
-
-
-//===== ALERTS =====//
+    // ── Strategy (row 4) ──
+    table.cell(t, 0, 4, "Strategy", text_color=color.white, bgcolor=color.new(color.green, 70))
+    table.cell(t, 1, 4, strategy,   text_color=color.white)
+    table.cell(t, 2, 4, "VIX: " + str.tostring(vixClose, format.mintick), text_color=color.white)
 
 //===== ALERTS =====//
 string strategyPrev = oldStrategy
