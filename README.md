@@ -1,124 +1,216 @@
-***
+# Strategy Picker v1.9.6 (Options Strategy Guide)
 
-# Strategy Picker (Options Strategy Guide)
+**Strategy Picker** is a TA-driven "strategy router" for intraday options trading.  
+It reads market trend, momentum, volatility, and EMA 8 position across three timeframes, then suggests which options structure to favor right now:
 
-**Strategy Picker** is a TA‑driven “strategy router” for intraday trading.  
-It reads market trend, volatility, and regime, then suggests which options structure to favor right now:
+- **Bull → PCS** — Bullish trend confirmed; favor **Put Credit Spreads**
+- **Bear → CCS** — Bearish trend confirmed; favor **Call Credit Spreads**
+- **Neutral → Iron Condor** — Range-bound; favor **Iron Condors** (optional)
+- **Neutral → Iron Butterfly** — Tight range, elevated VIX; favor **Iron Butterfly** (optional)
+- **Debit Trade** — Trend unclear or vol low; favor **directional debits** (calls/puts/spreads)
+- **Pause for reckoning and coffee** — Conditions messy; avoid new risk and gather more data
 
-- Bull with PCS → Bullish; favor **Put Credit Spreads**  
-- Bear with CCS → Bearish; favor **Call Credit Spreads**  
-- Neutral with Iron Condor → Range; favor **Iron Condors** (optional)  
-- Debit Trade → Trend unclear or vol low; favor **directional debits** (calls/puts/spreads)  
-- Pause for reckoning and coffee → Conditions messy; avoid new risk and collect more info  
+The indicator is designed to be stand-alone and works on SPX, NDX, QQQ, SPY, futures, and most liquid stocks.
 
-The indicator is designed to be stand‑alone, and works on SPX, NDX, QQQ, SPY, futures, and most liquid stocks.
-
-***
+---
 
 ## How it works
 
-Strategy Picker combines three components:
+Strategy Picker combines four components:
 
-1. **Triple‑screen trend tracking (15m + 60m)**  
-   - Uses MACD (12/26/9) and EMA 8 on 15‑minute and 60‑minute timeframes.  
-   - 60m and 15m must both be bullish to call a **Bull trend**, both bearish for a **Bear trend**; otherwise **Neutral**.  
-   - A 2‑bar confirmation smooths noise: the raw trend must persist for 2 bars before TrendState flips.
+### 1. Triple-Screen Trend Tracking (5m + 15m + 60m)
 
-2. **Trend strength via ADX**  
-   - ADX(14) on the chart timeframe measures how strong the trend is.  
-   - The orange line in the Strategy Picker pane is **ADX (trend strength)**.  
-   - The faint horizontal orange line is **“ADX Threshold (trend vs range)”** (default 20).  
-   - Below the threshold: weak / range‑bound; above: strong enough to trust trend strategies. [tradingview](https://www.tradingview.com/pine-script-docs/primer/first-indicator/)
+The indicator now uses **three timeframes** in a classic Elder Triple Screen structure:
 
-3. **Volatility / options regime via VIX**  
-   - VIX is pulled on 15‑minute bars.  
-   - Approximate regimes:
-     - VIX < 16 → low vol; premiums cheap → better for **Debit Trade**.  
-     - 16–19 with low ADX → **Neutral with Iron Condor** (if enabled).  
-     - VIX ≥ 19 with strong Bull/Bear trend → **PCS/CCS** in the direction of the trend.  
-     - VIX ≥ 19 with Neutral/unclear trend → **Pause**.
+| Timeframe | Role | Weight |
+|-----------|------|--------|
+| **60m** | Primary trend anchor — "the tide" | Highest |
+| **15m** | Intermediate confirmation — "the wave" | Medium |
+| **5m** | Entry timing / early signal — "the ripple" | Lowest |
 
-Putting it together, the script picks one strategy at all times after the initial wait period.
+Each timeframe is evaluated independently using **MACD (12/26/9)** and **EMA 8**:
+- A timeframe is **Bull** when: MACD > 0, MACD > Signal, and Close > EMA 8
+- A timeframe is **Bear** when: MACD < 0, MACD < Signal, and Close < EMA 8
+- Otherwise it is **Neutral**
 
-***
+The **confirmed TrendState** is derived from 60m + 15m agreement:
+- Both Bull → **Bull**
+- Both Bear → **Bear**
+- Disagreement → if `Use 60m as primary trend` is enabled, 60m wins; otherwise **Neutral**
 
-## Panel and visuals
+A **2-bar confirmation** smooths noise: the raw trend must persist for 2 consecutive bars before TrendState flips.
 
-When added to a 15‑minute chart with `overlay=false`, Strategy Picker shows:
+The 5m timeframe is displayed in the table as an early-warning signal but does **not** drive the confirmed TrendState. Think of it as a heads-up that momentum may be shifting before the 15m and 60m catch up.
 
-- **Blue TrendState plot**  
-  - 1 = Bull, −1 = Bear, 0 = Neutral (you can hide this in Style if you only want the table).
+---
 
-- **Orange ADX line**  
-  - `ADX (trend strength)` in the legend.  
-  - Higher values = stronger trend; weak values = chop / range. [avatrade](https://www.avatrade.com/education/technical-analysis-indicators-strategies/adx-indicator-trading-strategies)
+### 2. EMA 8 — Price Position as a Directional Filter
 
-- **Orange horizontal line**  
-  - Labeled `ADX Threshold (trend vs range)`.  
-  - Default 20; can be adjusted in Inputs.
+**EMA 8** plays a dual role: it is part of the trend state calculation *and* displayed separately per timeframe as a price position indicator.
 
-- **Top‑left table**  
-  - Row 1:  
-    - Trend: `Bull / Bear / Neutral`  
-    - ADX: current ADX value  
-  - Row 2:  
-    - Strategy: one of `Bull with PCS / Bear with CCS / Neutral with Iron Condor / Debit Trade / Pause for reckoning and coffee`  
-    - VIX: current VIX value  
+Each timeframe shows one of three states:
 
-This makes it easy to see, at a glance, *why* a given strategy is being suggested.
+| Symbol | Meaning |
+|--------|---------|
+| **↑ EMA 8** | Price is **above** EMA 8 — bullish momentum, trend is supported |
+| **@ EMA 8** | Price is **at** EMA 8 (within 0.05%) — decision zone, potential bounce or break |
+| **↓ EMA 8** | Price is **below** EMA 8 — bearish momentum, trend is under pressure |
 
-***
+**Why EMA 8 matters:**  
+Many traders — including several prominent YouTubers and short-term traders — use EMA 8 exclusively as a trade filter. Price tends to bounce off EMA 8 as dynamic support in a bull trend, or reject it as resistance in a bear trend. When price crosses through EMA 8 on the 60m, it often precedes a meaningful move.
+
+**Reading the EMA 8 column in context:**
+- All three timeframes showing **↑ EMA 8** with Bull trend = high-conviction bull setup
+- 5m showing **↓ EMA 8** while 15m/60m show **↑ EMA 8** = 5m pullback inside an uptrend, potential PCS entry
+- 60m showing **↓ EMA 8** while 5m/15m are neutral = caution, larger trend may be turning
+- All three showing **@ EMA 8** = coiling, breakout or breakdown imminent
+
+---
+
+### 3. Trend Strength via ADX
+
+**ADX(14)** measures how strong (or weak) the current trend is, regardless of direction.
+
+- The **orange line** in the Strategy Picker pane is ADX (trend strength).
+- The **faint horizontal orange line** is the ADX Threshold (default 20).
+- **Below threshold** → weak / range-bound; trend strategies carry more risk.
+- **Above threshold** → trend is strong enough to trust directional strategies.
+
+ADX is used as a gate for credit spreads:
+- Credit spreads require both a directional trend **and** ADX ≥ threshold.
+- When VIX is in the mid-range (18–19), ADX trending is required before full credit spread size is allowed; below that level, size is reduced.
+
+The **DI+ and DI-** lines (displayed in the Trend row) show which direction the ADX energy is pointing:
+- DI+ > DI- = bullish pressure
+- DI- > DI+ = bearish pressure
+
+---
+
+### 4. Volatility / Options Regime via VIX
+
+VIX is pulled on 15-minute bars from `TVC:VIX` and used to determine which options structure is appropriate given the current premium environment:
+
+| VIX Level | Regime | Strategy |
+|-----------|--------|----------|
+| < 16 | Low vol, cheap premiums | Debit spreads (directional) |
+| 16–19, ADX flat | Sideways, vol mild | Iron Condor (if enabled) |
+| 19–23, ADX flat | Tight range, vol elevated | Iron Butterfly (if enabled) |
+| ≥ 18 with ADX trending | Trend + vol confirmed | Credit Spreads (reduced size) |
+| ≥ 19 with ADX trending | Full credit spread regime | Credit Spreads (full size) |
+| > 23, no trend | High vol, no direction | Pause |
+
+VIX thresholds are all user-configurable in the Inputs panel.
+
+---
+
+### Putting it all together
+
+The strategy decision flows as follows:
+
+```
+TrendState (60m+15m confirmed)
+    └── Bull or Bear?
+            └── ADX trending? → YES → VIX ≥ CS threshold? → PCS / CCS
+                               → NO  → VIX low? → Debit Trade
+    └── Neutral?
+            └── VIX < 16 → Debit Trade (with ADX bias direction)
+            └── VIX 19–23, ADX flat → Iron Butterfly
+            └── VIX 16–19, ADX flat → Iron Condor
+            └── VIX > 23, ADX flat → Pause
+```
+
+The **5m EMA 8 position** and the **ADX DI+/DI- readings** act as secondary confirmation — they don't change the strategy output but help you judge the quality of the signal before entering.
+
+---
+
+## Panel and Visuals
+
+When added to any chart with `overlay=false`, Strategy Picker shows:
+
+**Plots:**
+- **Blue TrendState line** — 1 = Bull, −1 = Bear, 0 = Neutral (hideable in Style tab)
+- **Orange ADX line** — higher = stronger trend; below threshold = chop
+- **Faint orange horizontal line** — ADX Threshold (default 20)
+
+**Top-right table (6 rows):**
+
+| Row | Label col (black) | Direction col | Detail col |
+|-----|-------------------|---------------|------------|
+| 0 | *(spacer)* | | |
+| 1 | **5m** | Bull ▲ / Bear ▼ / Neutral | ↑ ↓ @ EMA 8 |
+| 2 | **15m** | Bull ▲ / Bear ▼ / Neutral | ↑ ↓ @ EMA 8 |
+| 3 | **60m** | Bull ▲ / Bear ▼ / Neutral | ↑ ↓ @ EMA 8 |
+| 4 | **Trend** | Bull / Bear / Neutral | ADX value + DI+/DI- |
+| 5 | **Strategy** | Full strategy name + DTE | VIX value |
+
+Color coding:
+- **Green** = Bullish (semi-transparent on TF rows, more solid on Trend/Strategy)
+- **Red** = Bearish (same hierarchy)
+- **Grey** = Neutral
+- **Black** = Label column always
+
+---
 
 ## Inputs
 
-Key user‑configurable inputs:
+| Group | Input | Default | Notes |
+|-------|-------|---------|-------|
+| MACD / EMA | Fast / Slow / Signal | 12 / 26 / 9 | Standard MACD |
+| MACD / EMA | EMA Length | 8 | EMA 8 — classic short-term trend filter |
+| ADX | ADX Length | 14 | Standard DMI period |
+| ADX | ADX Trend Threshold | 20 | Below = range; above = trend |
+| VIX Thresholds | VIX Low (Debit only) | 16 | Below this → only debit trades |
+| VIX Thresholds | VIX IC Low / High | 16 / 19 | Iron Condor window |
+| VIX Thresholds | VIX IBF Low / High | 19 / 23 | Iron Butterfly window |
+| VIX Thresholds | VIX Mid (CS reduced) | 18 | CS allowed with ADX, reduced size |
+| VIX Thresholds | VIX High (CS full) | 19 | CS allowed at full size |
+| DTE Guidance | Credit Spreads DTE | 0 | Same-day; shown in strategy label |
+| DTE Guidance | IC / IBF DTE | 5 | 3–7 DTE range |
+| DTE Guidance | Debit Spreads DTE | 14 | 14–21 DTE range |
+| Options | Allow Iron Condor | true | Toggle IC suggestions |
+| Options | Allow Iron Butterfly | true | Toggle IBF suggestions |
+| Options | Skip wait at open | false | If false, waits N bars after RTH open |
+| Options | Bars to wait at open | 2 | Default ≈ 10–30 min depending on TF |
+| Options | Use 60m as primary trend | true | 60m wins when TFs disagree |
 
-- **MACD Fast / Slow / Signal lengths** (defaults 12/26/9)  
-- **EMA Length** for trend filter (default 8)  
-- **ADX Length** (default 14) and **ADX Trend Threshold** (default 20)  
-- **VIX thresholds**:
-  - `VIX Low (Debit)`  
-  - `VIX IC Low` / `VIX IC High` (IC window)  
-  - `VIX CS Threshold` (credit‑spread regime)  
-- **Allow Iron Condor when Neutral** (on/off)  
-- **Skip wait period at open?** (default false)  
-- **Bars to wait after RTH open** (default 2 ≈ 30 minutes on 15m)
+---
 
-***
+## Alerts
 
-## Alerts and old/new strategy
+Two alert conditions are defined:
 
-The script defines two alert conditions:
+- **Strategy Changed** — fires when the strategy text changes after bar confirmation.
+- **Trend Changed** — fires when TrendState flips after 2-bar confirmation.
 
-- **Strategy Changed** – fires whenever the picked strategy text changes after confirmation.  
-- **Trend Change** – fires when TrendState flips after 2‑bar confirmation.
+Alert message format:
+```
+Strategy Picker | SPX | Prev: Bear Call Credit Spread (CCS) [0 DTE] → Now: Pause for reckoning and coffee
+Strategy Picker | SPX | Trend: Bear → Neutral
+```
 
-Inside the code:
+> **Note:** Pine Script v6 requires `alertcondition()` message strings to be constant. Old/new strategy names are injected via `alert()` calls, not `alertcondition()`. For webhook/Discord bot integration, parse the `Prev:` and `Now:` fields from the alert message.
 
-- `strategyPrev` (via `oldStrategy`) holds the **previous strategy name**.  
-- `strategy` holds the **new strategy name**.
+---
 
-Pine v6 requires `alertcondition()` messages to be constant strings, so old/new names are not injected directly into the alert text. Instead:
+## Recommended Usage
 
-- Use `Strategy Changed` as a generic alert condition.  
-- Let your webhook/Discord bot keep track of the last strategy it saw per symbol, and build messages like  
-  `"SPX | Strategy: Pause -> Bull with PCS"`  
-  using `strategyPrev` vs `strategy` in your external logic.
+- Works on any timeframe but optimized for **15-minute charts** on SPX, MES, NQ, QQQ, SPY, or large-cap stocks.
+- Wait ~10–30 minutes after RTH open before acting on suggestions (or enable `Skip wait at open`).
+- Use as a **guide, not an execution system**:
+  - `Bull → PCS` → consider selling a put credit spread below current price
+  - `Bear → CCS` → consider selling a call credit spread above current price
+  - `Neutral → Iron Condor` → consider a defined-risk range trade
+  - `Debit Trade` → consider directional calls/puts or a debit spread
+  - `Pause for reckoning and coffee` → reduce risk, wait for clearer signal
 
-***
+**Reading the table quickly:**
+1. Glance at **5m / 15m / 60m** rows — are they aligned? All green = high confidence bull. All red = high confidence bear. Mixed = caution.
+2. Check the **EMA 8 column** — is price above or below on the 60m? That tilts the bias.
+3. Check **Trend row** — is ADX 🔥 (trending)? That unlocks credit spreads.
+4. Read **Strategy row** — the final output, with DTE guidance and VIX context.
 
-## Recommended usage
-
-- Run on **15‑minute charts** for SPX, MES, NQ, QQQ, SPY, or large‑cap stocks.  
-- Wait until ~30 minutes after the RTH open (or enable `skipWait`) before acting on suggestions.  
-- Use Strategy Picker as a **guide**, not an execution system:
-  - If it says `Bull with PCS`, think in terms of selling bullish put credit spreads.  
-  - If it says `Debit Trade`, think in terms of directional calls/puts or debit spreads.  
-  - If it says `Pause for reckoning and coffee`, respect the chop and reduce risk.
-
-***
+---
 
 ## License
 
 This project is licensed under the terms of the MIT License.
-
