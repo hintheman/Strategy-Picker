@@ -110,10 +110,11 @@ f_csAllowed(_vix, _adxTrending) =>
     _vix >= vixCSHigh or (_vix >= vixCSMid and _adxTrending)
 
 f_csLabel(_vix) =>
-    _vix >= vixCSHigh ? "" : " (reduced size)"
+    // _vix >= vixCSHigh ? "" : " (reduced size)"
+    _vix >= vixCSHigh ? "" : ""
 
 f_dteTag(_dte) =>
-    _dte == 0 ? " [0 DTE — same day]" : " [" + str.tostring(_dte) + " DTE]"
+    _dte == 0 ? " [0 DTE]" : " [" + str.tostring(_dte) + " DTE]"
 
 //===== STRATEGY PICKER =====//
 f_trendText(_ts) =>
@@ -142,13 +143,13 @@ if barstate.isconfirmed
         dteDbt  = f_dteTag(dteDebit)
 
         if effectiveTrend == 1 and adxTrending and csOk
-            strategy := "Bull Put Credit Spread (PCS)" + csLabel + dteCS
+            strategy := "Put Credit Spread" + csLabel + dteCS
         else if effectiveTrend == -1 and adxTrending and csOk
-            strategy := "Bear Call Credit Spread (CCS)" + csLabel + dteCS
+            strategy := "Calll Credit Spread" + csLabel + dteCS
         else if effectiveTrend == 0
             if vixClose < vixLowTh
-                strategy := adxBias == 1  ? "Bull Call Debit Spread" + dteDbt :
-                             adxBias == -1 ? "Bear Put Debit Spread"  + dteDbt :
+                strategy := adxBias == 1  ? "Debit Call Spread" + dteDbt :
+                             adxBias == -1 ? "Debit Put Spread"  + dteDbt :
                              "Debit Spread (wait for direction)" + dteDbt
             else if useIronButterfly and not adxTrending and vixClose >= vixIBFLow and vixClose <= vixIBFHigh
                 strategy := "Neutral — Iron Butterfly" + dteIW
@@ -159,9 +160,9 @@ if barstate.isconfirmed
             else
                 strategy := "Pause for reckoning and coffee"
         else if effectiveTrend == 1
-            strategy := adxTrending ? "Bull Call Debit Spread" + dteDbt : "Bull Call Debit Spread (weak)" + dteDbt
+            strategy := adxTrending ? "Call Debit Spread" + dteDbt : "Call Debit Spread (weak)" + dteDbt
         else if effectiveTrend == -1
-            strategy := adxTrending ? "Bear Put Debit Spread"  + dteDbt : "Bear Put Debit Spread (weak)"  + dteDbt
+            strategy := adxTrending ? "Put Debit Spread"  + dteDbt : "Put Debit Spread (weak)"  + dteDbt
 
 //===== PLOTTING =====//
 plot(trendState, title="TrendState (1=Bull,-1=Bear,0=Neutral)", color=color.new(color.blue, 0))
