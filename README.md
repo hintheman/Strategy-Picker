@@ -1,4 +1,4 @@
-# Strategy Picker v1.9.6 (Options Strategy Guide)
+# Strategy Picker v2.1 (Options Strategy Guide)
 
 **Strategy Picker** is a TA-driven "strategy router" for intraday options trading.  
 It reads market trend, momentum, volatility, and EMA 8 position across three timeframes, then suggests which options structure to favor right now:
