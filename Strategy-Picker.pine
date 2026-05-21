@@ -1,12 +1,12 @@
 // © Hin + Claude
-// Strategy Picker v1.9.9 — Triple Screen: 5m / 15m / 60m
+// Strategy Picker v2.1 — Triple Screen: 5m / 15m / 60m
 // Score-based TF state (3-of-4 signals). EMA 8 position.
 // Time-based alerts: 6:30 AM PT fixed, 7:00 AM PT optional.
 // All alerts output plain-text (no JSON — paste into TradingView alert Message field as-is).
 // Webhook: set TradingView alert Message field to BLANK so alert() text passes through cleanly.
 
 //@version=6
-indicator("Strategy Picker v1.9.9", overlay=false, max_lines_count=200, max_labels_count=200)
+indicator("Strategy Picker v2.1", overlay=false, max_lines_count=200, max_labels_count=200)
 
 // ═══════════════════════════════════════════════════════════
 // INPUTS
