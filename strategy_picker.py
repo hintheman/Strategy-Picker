@@ -358,19 +358,22 @@ def _discord_full(label, tag, strat, prev_strat, d):
     send_discord(msg)
 
 
-def run_all(symbol_labels, send_alert, note, prev_strategies, prev_trends):
-    """scan all symbols; fire discord on open bar or trend/strategy change."""
+def run_all(symbol_labels, send_alert, note, prev_strategies, prev_trends, prev_adx):
+    """scan all symbols; fire discord on open bar, trend change, adx flip, or strategy change."""
     open_bar = is_open_bar()
     for symbol, label in symbol_labels:
         try:
             strategy, trend_state, d = run(symbol, label=label,
                                            send_alert=False, note=note)
             d["trend_txt"] = trend_text(trend_state)
+            adx_trending   = d["adx"] >= adx_trend_th
 
             prev_s = prev_strategies.get(label)
             prev_t = prev_trends.get(label)
+            prev_a = prev_adx.get(label)           # bool or None
             strat_changed = prev_s is not None and strategy != prev_s
             trend_changed = prev_t is not None and trend_state != prev_t
+            adx_flipped   = prev_a is not None and adx_trending != prev_a
             first_run     = prev_s is None
 
             if send_alert:
@@ -379,26 +382,50 @@ def run_all(symbol_labels, send_alert, note, prev_strategies, prev_trends):
                     logging.info("open alert %s — %s", label, strategy)
                     _discord_full(label, tag, strategy, None, d)
 
-                elif trend_changed:
-                    old_t = trend_text(prev_t)
-                    new_t = trend_text(trend_state)
-                    tag   = f"📊 TREND: {old_t} → {new_t}"
-                    logging.info("trend change %s: %s → %s  strat: %s",
-                                 label, old_t, new_t, strategy)
-                    _discord_full(label, tag, strategy, prev_s, d)
+                else:
+                    # trend change — highest priority non-open alert
+                    if trend_changed:
+                        old_t = trend_text(prev_t)
+                        new_t = trend_text(trend_state)
+                        tag   = f"📊 TREND: {old_t} → {new_t}"
+                        logging.info("trend change %s: %s → %s  strat: %s",
+                                     label, old_t, new_t, strategy)
+                        _discord_full(label, tag, strategy, prev_s, d)
 
-                elif strat_changed:
-                    tag = "🔄 STRATEGY CHANGED"
-                    logging.info("strat change %s: %s → %s", label, prev_s, strategy)
-                    _discord_full(label, tag, strategy, prev_s, d)
+                    # adx momentum flip — fires independently of trend change
+                    if adx_flipped:
+                        adx_tag = (f"⚡ ADX TRENDING ({d['adx']:.1f} ≥ {adx_trend_th:.0f})"
+                                   if adx_trending else
+                                   f"⚡ ADX FLAT ({d['adx']:.1f} < {adx_trend_th:.0f})")
+                        implication = ("credit spreads unlocked" if adx_trending
+                                       else "credit spreads locked — prefer debits")
+                        msg = (f"**SP | {label} | {adx_tag}**\n"
+                               f"trend: {d['trend_txt']}  |  adx {d['adx']:.1f}{d['adx_flag']}  "
+                               f"di+:{d['dip']:.1f} di-:{d['dim']:.1f}\n"
+                               f"→ {implication}\n"
+                               f"**strat: {strategy}**\n"
+                               f"vix: {d['vix']:.2f}")
+                        send_discord(msg)
+                        logging.info("adx flip %s: %s → %s  adx=%.1f  %s",
+                                     label,
+                                     "trending" if prev_a else "flat",
+                                     "trending" if adx_trending else "flat",
+                                     d["adx"], implication)
+
+                    # strategy changed without a trend or adx flip
+                    elif strat_changed and not trend_changed:
+                        tag = "🔄 STRATEGY CHANGED"
+                        logging.info("strat change %s: %s → %s", label, prev_s, strategy)
+                        _discord_full(label, tag, strategy, prev_s, d)
 
             prev_strategies[label] = strategy
             prev_trends[label]     = trend_state
+            prev_adx[label]        = adx_trending
 
         except Exception as e:
             logging.error("✗ %s: %s", label, e)
 
-    return prev_strategies, prev_trends
+    return prev_strategies, prev_trends, prev_adx
 
 
 if __name__ == "__main__":
@@ -437,10 +464,10 @@ if __name__ == "__main__":
         logging.info("continuous mode — 15m bars — symbols: %s",
                      [lbl for _, lbl in symbol_labels])
         logging.info("alerts: open bar (9:30 ET) + trend change + strategy change")
-        prev_s, prev_t = {}, {}
+        prev_s, prev_t, prev_a = {}, {}, {}
         while True:
-            prev_s, prev_t = run_all(symbol_labels, send_alert,
-                                     args.note, prev_s, prev_t)
+            prev_s, prev_t, prev_a = run_all(symbol_labels, send_alert,
+                                             args.note, prev_s, prev_t, prev_a)
             secs = secs_to_next_bar()
             logging.info("next bar in %.0fs  (%s ET)",
                          secs, datetime.fromtimestamp(time.time() + secs,
