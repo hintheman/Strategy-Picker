@@ -295,14 +295,16 @@ def run(symbol="^GSPC", label=None, send_alert=True, note=None):
     tf15_txt = "bull ▲" if s15 == 1 else "bear ▼" if s15 == -1 else "neutral"
     tf60_txt = "bull ▲" if s60 == 1 else "bear ▼" if s60 == -1 else "neutral"
 
-    logging.info("sp | %-6s | %-12s | adx %.1f%s | vix %.2f | 5m:%-8s 15m:%-8s 60m:%s",
-                 display, strategy[:30], adx_val, "🔥" if adx_trending else " –",
-                 vix, tf5_txt, tf15_txt, tf60_txt)
+    adx_flag = "🔥" if adx_trending else "–"
+    logging.info("sp | %-6s | trend:%-8s | %-32s | adx %.1f%s | vix %.2f",
+                 display, trend_text(trend_state), strategy[:32],
+                 adx_val, adx_flag, vix)
+    logging.debug("     5m:%-8s 15m:%-8s 60m:%s  di+:%.1f di-:%.1f",
+                  tf5_txt, tf15_txt, tf60_txt, dip_val, dim_val)
 
     if send_alert:
-        adx_flag  = "🔥" if adx_trending else "–"
-        tag       = f"MANUAL — {note}" if note else "15m BAR"
         note_line = f"\n> {note}" if note else ""
+        tag       = f"MANUAL — {note}" if note else "15m BAR"
         msg = (f"**SP | {display} | {tag}**{note_line}\n"
                f"5m: {tf5_txt}  {ema_pos_text(ep5)}\n"
                f"15m: {tf15_txt}  {ema_pos_text(ep15)}\n"
@@ -313,7 +315,13 @@ def run(symbol="^GSPC", label=None, send_alert=True, note=None):
         send_discord(msg)
         logging.info("  → discord sent (%s)", display)
 
-    return strategy
+    # return both so callers can track trend changes independently
+    return strategy, trend_state, {
+        "tf5": tf5_txt, "tf15": tf15_txt, "tf60": tf60_txt,
+        "ep5": ep5, "ep15": ep15, "ep60": ep60,
+        "adx": adx_val, "adx_flag": adx_flag,
+        "dip": dip_val, "dim": dim_val, "vix": vix,
+    }
 
 
 # ─── continuous run helpers ───────────────────────────────────────────────────
@@ -328,29 +336,69 @@ def secs_to_next_bar():
     return max(5, next_bar - now + 5)
 
 
-def run_all(symbol_labels, send_alert, note, prev_strategies):
-    """run one scan across all symbols; return updated prev_strategies dict."""
+def is_open_bar():
+    """true during the 9:30–9:45 am et bar on weekdays (rth open)."""
+    now = datetime.now(ET)
+    if now.weekday() >= 5:
+        return False
+    return now.hour == 9 and 30 <= now.minute < 45
+
+
+def _discord_full(label, tag, strat, prev_strat, d):
+    """send a full strategy embed to discord."""
+    msg = (f"**SP | {label} | {tag}**\n"
+           f"5m: {d['tf5']}  {ema_pos_text(d['ep5'])}\n"
+           f"15m: {d['tf15']}  {ema_pos_text(d['ep15'])}\n"
+           f"60m: {d['tf60']}  {ema_pos_text(d['ep60'])}\n"
+           f"trend: {d['trend_txt']}  |  adx {d['adx']:.1f}{d['adx_flag']}  "
+           f"di+:{d['dip']:.1f} di-:{d['dim']:.1f}\n"
+           f"**strat: {strat}**\n"
+           + (f"prev: {prev_strat}\n" if prev_strat else "")
+           + f"vix: {d['vix']:.2f}")
+    send_discord(msg)
+
+
+def run_all(symbol_labels, send_alert, note, prev_strategies, prev_trends):
+    """scan all symbols; fire discord on open bar or trend/strategy change."""
+    open_bar = is_open_bar()
     for symbol, label in symbol_labels:
         try:
-            strategy = run(symbol, label=label, send_alert=False, note=note)
-            prev = prev_strategies.get(label)
-            changed = prev is not None and strategy != prev
-            first   = prev is None
+            strategy, trend_state, d = run(symbol, label=label,
+                                           send_alert=False, note=note)
+            d["trend_txt"] = trend_text(trend_state)
 
-            if send_alert and (first or changed):
-                tag = "OPEN" if first else "STRATEGY CHANGED"
-                if changed:
-                    logging.info("strategy change %-6s: %s → %s", label, prev, strategy)
-                adx_flag = "🔥" if strategy else "–"
-                msg = (f"**SP | {label} | {tag}**\n"
-                       f"**strat: {strategy}**\n"
-                       f"prev: {prev or '—'}")
-                send_discord(msg)
+            prev_s = prev_strategies.get(label)
+            prev_t = prev_trends.get(label)
+            strat_changed = prev_s is not None and strategy != prev_s
+            trend_changed = prev_t is not None and trend_state != prev_t
+            first_run     = prev_s is None
+
+            if send_alert:
+                if open_bar or first_run:
+                    tag = "📈 OPEN" if open_bar else "📈 START"
+                    logging.info("open alert %s — %s", label, strategy)
+                    _discord_full(label, tag, strategy, None, d)
+
+                elif trend_changed:
+                    old_t = trend_text(prev_t)
+                    new_t = trend_text(trend_state)
+                    tag   = f"📊 TREND: {old_t} → {new_t}"
+                    logging.info("trend change %s: %s → %s  strat: %s",
+                                 label, old_t, new_t, strategy)
+                    _discord_full(label, tag, strategy, prev_s, d)
+
+                elif strat_changed:
+                    tag = "🔄 STRATEGY CHANGED"
+                    logging.info("strat change %s: %s → %s", label, prev_s, strategy)
+                    _discord_full(label, tag, strategy, prev_s, d)
 
             prev_strategies[label] = strategy
+            prev_trends[label]     = trend_state
+
         except Exception as e:
             logging.error("✗ %s: %s", label, e)
-    return prev_strategies
+
+    return prev_strategies, prev_trends
 
 
 if __name__ == "__main__":
@@ -380,16 +428,19 @@ if __name__ == "__main__":
     if args.run == "once":
         for symbol, label in symbol_labels:
             try:
-                run(symbol, label=label, note=args.note, send_alert=send_alert)
+                strategy, trend_state, d = run(symbol, label=label,
+                                               note=args.note, send_alert=send_alert)
             except Exception as e:
                 logging.error("✗ %s: %s", label, e)
 
     else:  # continuous
         logging.info("continuous mode — 15m bars — symbols: %s",
                      [lbl for _, lbl in symbol_labels])
-        prev = {}
+        logging.info("alerts: open bar (9:30 ET) + trend change + strategy change")
+        prev_s, prev_t = {}, {}
         while True:
-            prev = run_all(symbol_labels, send_alert, args.note, prev)
+            prev_s, prev_t = run_all(symbol_labels, send_alert,
+                                     args.note, prev_s, prev_t)
             secs = secs_to_next_bar()
             logging.info("next bar in %.0fs  (%s ET)",
                          secs, datetime.fromtimestamp(time.time() + secs,
