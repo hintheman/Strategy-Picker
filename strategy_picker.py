@@ -121,8 +121,6 @@ embed_color = {
     0:  8421504,   # grey   — neutral
 }
 
-_blank = "​"  # zero-width space — adds visual gap between embed fields
-
 
 def send_discord(payload):
     """send a discord webhook payload (embed dict or plain-text dict)."""
@@ -339,15 +337,12 @@ def run(symbol="^GSPC", label=None, send_alert=True, note=None):
              f"5m: {tf5_txt}  {ema_pos_text(ep5)}\n"
              f"15m: {tf15_txt}  {ema_pos_text(ep15)}\n"
              f"60m: {tf60_txt}  {ema_pos_text(ep60)}"),
-            (_blank, _blank),
             ("trend",
              f"{trend_text(trend_state)}  |  adx {adx_val:.1f}{adx_flag}  "
              f"di+:{dip_val:.1f}  di-:{dim_val:.1f}"),
-            (_blank, _blank),
             ("strategy", strategy),
         ]
         if note:
-            fields.append((_blank, _blank))
             fields.append(("note", note))
         send_discord(build_embed(tag, display, trend_state, fields))
         logging.info("  → discord sent (%s)", display)
@@ -388,15 +383,13 @@ def _discord_full(label, tag, strat, prev_strat, d, trend_state):
          f"5m: {d['tf5']}  {ema_pos_text(d['ep5'])}\n"
          f"15m: {d['tf15']}  {ema_pos_text(d['ep15'])}\n"
          f"60m: {d['tf60']}  {ema_pos_text(d['ep60'])}"),
-        (_blank, _blank),
         ("trend",
          f"{d['trend_txt']}  |  adx {d['adx']:.1f}{d['adx_flag']}  "
          f"di+:{d['dip']:.1f}  di-:{d['dim']:.1f}"),
-        (_blank, _blank),
         ("strategy", strat),
     ]
     if prev_strat:
-        fields += [(_blank, _blank), ("previous strategy", prev_strat)]
+        fields.append(("previous strategy", prev_strat))
     send_discord(build_embed(tag, label, trend_state, fields))
 
 
@@ -445,9 +438,7 @@ def run_all(symbol_labels, send_alert, note, prev_strategies, prev_trends, prev_
                             ("trend",
                              f"{d['trend_txt']}  |  adx {d['adx']:.1f}{d['adx_flag']}  "
                              f"di+:{d['dip']:.1f}  di-:{d['dim']:.1f}"),
-                            (_blank, _blank),
                             ("momentum", implication),
-                            (_blank, _blank),
                             ("strategy", strategy),
                         ]
                         send_discord(build_embed(adx_tag, label, trend_state, fields))
