@@ -116,11 +116,11 @@ def setup_logging(debug: bool = False):
 
 # embed colors keyed by trend_state (1=bull, -1=bear, 0=neutral)
 embed_color = {
-    1:  3066993,   # green  — bull
+    1:  3447003,   # blue   — bull
     -1: 15158332,  # red    — bear
     0:  8421504,   # grey   — neutral
 }
-color_trend_change = 15844367  # yellow / warning — trend state flip
+color_trend_change = 15844367  # yellow — trend state change (warning)
 
 
 def send_discord(payload):
