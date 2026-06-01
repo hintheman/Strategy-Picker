@@ -120,6 +120,7 @@ embed_color = {
     -1: 15158332,  # red    — bear
     0:  8421504,   # grey   — neutral
 }
+color_trend_change = 15844367  # yellow / warning — trend state flip
 
 
 def send_discord(payload):
@@ -132,11 +133,11 @@ def send_discord(payload):
         logging.warning("discord error: %s", e)
 
 
-def build_embed(tag, label, trend_state, fields, footer=None):
+def build_embed(tag, label, trend_state, fields, footer=None, color=None):
     """build a discord embed payload with color-coded by trend."""
     now_str = datetime.now(ET).strftime("%Y-%m-%d %H:%M ET")
     title   = f"strategy-picker v{VERSION} | {label} | {tag}"
-    color   = embed_color.get(trend_state, embed_color[0])
+    color   = color if color is not None else embed_color.get(trend_state, embed_color[0])
     embed   = {
         "title":  title,
         "color":  color,
@@ -376,7 +377,7 @@ def is_open_bar():
     return now.hour == 9 and 30 <= now.minute < 45
 
 
-def _discord_full(label, tag, strat, prev_strat, d, trend_state):
+def _discord_full(label, tag, strat, prev_strat, d, trend_state, color=None):
     """send a full color-coded strategy embed to discord."""
     fields = [
         ("timeframes",
@@ -390,7 +391,7 @@ def _discord_full(label, tag, strat, prev_strat, d, trend_state):
     ]
     if prev_strat:
         fields.append(("previous strategy", prev_strat))
-    send_discord(build_embed(tag, label, trend_state, fields))
+    send_discord(build_embed(tag, label, trend_state, fields, color=color))
 
 
 def run_all(symbol_labels, send_alert, note, prev_strategies, prev_trends, prev_adx):
@@ -425,7 +426,8 @@ def run_all(symbol_labels, send_alert, note, prev_strategies, prev_trends, prev_
                         tag   = f"📊 TREND: {old_t} → {new_t}"
                         logging.info("trend change %s: %s → %s  strategy: %s",
                                      label, old_t, new_t, strategy)
-                        _discord_full(label, tag, strategy, prev_s, d, trend_state)
+                        _discord_full(label, tag, strategy, prev_s, d, trend_state,
+                                      color=color_trend_change)
 
                     # adx momentum flip — fires independently of trend change
                     if adx_flipped:
