@@ -1,6 +1,8 @@
 # strategy_picker.py
-# converted from strategy-picker v2.1 (pine script)
+# converted from strategy-picker v2.7 (pine script)
 # all variable and function names are lowercase
+
+VERSION = "2.7"
 
 import argparse
 import glob
@@ -110,13 +112,41 @@ def setup_logging(debug: bool = False):
     root.addHandler(ch)
     logging.info("log → %s  (retain %d days)", log_path, log_retain_days)
 
-# ─── discord alert ─────────────────────────────────────────────────────────────
+# ─── discord ──────────────────────────────────────────────────────────────────
 
-def send_discord(msg):
+# embed colors keyed by trend_state (1=bull, -1=bear, 0=neutral)
+embed_color = {
+    1:  3066993,   # green  — bull
+    -1: 15158332,  # red    — bear
+    0:  8421504,   # grey   — neutral
+}
+
+_blank = "​"  # zero-width space — adds visual gap between embed fields
+
+
+def send_discord(payload):
+    """send a discord webhook payload (embed dict or plain-text dict)."""
     try:
-        requests.post(discord_url, json={"content": msg}, timeout=10)
+        r = requests.post(discord_url, json=payload, timeout=10)
+        if r.status_code not in (200, 204):
+            logging.warning("discord %s: %s", r.status_code, r.text[:80])
     except Exception as e:
-        print(f"  discord error: {e}")
+        logging.warning("discord error: %s", e)
+
+
+def build_embed(tag, label, trend_state, fields, footer=None):
+    """build a discord embed payload with color-coded by trend."""
+    now_str = datetime.now(ET).strftime("%Y-%m-%d %H:%M ET")
+    title   = f"strategy-picker v{VERSION} | {label} | {tag}"
+    color   = embed_color.get(trend_state, embed_color[0])
+    embed   = {
+        "title":  title,
+        "color":  color,
+        "fields": [{"name": k, "value": v, "inline": False} for k, v in fields],
+        "footer": {"text": footer or f"tastydaytraders | strategy-picker v{VERSION} | {now_str}"},
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+    }
+    return {"embeds": [embed]}
 
 # ─── data fetching ─────────────────────────────────────────────────────────────
 
@@ -303,16 +333,23 @@ def run(symbol="^GSPC", label=None, send_alert=True, note=None):
                   tf5_txt, tf15_txt, tf60_txt, dip_val, dim_val)
 
     if send_alert:
-        note_line = f"\n> {note}" if note else ""
-        tag       = f"MANUAL — {note}" if note else "15m BAR"
-        msg = (f"**SP | {display} | {tag}**{note_line}\n"
-               f"5m: {tf5_txt}  {ema_pos_text(ep5)}\n"
-               f"15m: {tf15_txt}  {ema_pos_text(ep15)}\n"
-               f"60m: {tf60_txt}  {ema_pos_text(ep60)}\n"
-               f"trend: {trend_text(trend_state)}  |  adx {adx_val:.1f}{adx_flag}  di+:{dip_val:.1f} di-:{dim_val:.1f}\n"
-               f"**strat: {strategy}**\n"
-               f"vix: {vix:.2f}")
-        send_discord(msg)
+        tag    = f"MANUAL — {note}" if note else "15m BAR"
+        fields = [
+            ("timeframes",
+             f"5m: {tf5_txt}  {ema_pos_text(ep5)}\n"
+             f"15m: {tf15_txt}  {ema_pos_text(ep15)}\n"
+             f"60m: {tf60_txt}  {ema_pos_text(ep60)}"),
+            (_blank, _blank),
+            ("trend",
+             f"{trend_text(trend_state)}  |  adx {adx_val:.1f}{adx_flag}  "
+             f"di+:{dip_val:.1f}  di-:{dim_val:.1f}"),
+            (_blank, _blank),
+            ("strategy", strategy),
+        ]
+        if note:
+            fields.append((_blank, _blank))
+            fields.append(("note", note))
+        send_discord(build_embed(tag, display, trend_state, fields))
         logging.info("  → discord sent (%s)", display)
 
     # return both so callers can track trend changes independently
@@ -344,18 +381,23 @@ def is_open_bar():
     return now.hour == 9 and 30 <= now.minute < 45
 
 
-def _discord_full(label, tag, strat, prev_strat, d):
-    """send a full strategy embed to discord."""
-    msg = (f"**SP | {label} | {tag}**\n"
-           f"5m: {d['tf5']}  {ema_pos_text(d['ep5'])}\n"
-           f"15m: {d['tf15']}  {ema_pos_text(d['ep15'])}\n"
-           f"60m: {d['tf60']}  {ema_pos_text(d['ep60'])}\n"
-           f"trend: {d['trend_txt']}  |  adx {d['adx']:.1f}{d['adx_flag']}  "
-           f"di+:{d['dip']:.1f} di-:{d['dim']:.1f}\n"
-           f"**strat: {strat}**\n"
-           + (f"prev: {prev_strat}\n" if prev_strat else "")
-           + f"vix: {d['vix']:.2f}")
-    send_discord(msg)
+def _discord_full(label, tag, strat, prev_strat, d, trend_state):
+    """send a full color-coded strategy embed to discord."""
+    fields = [
+        ("timeframes",
+         f"5m: {d['tf5']}  {ema_pos_text(d['ep5'])}\n"
+         f"15m: {d['tf15']}  {ema_pos_text(d['ep15'])}\n"
+         f"60m: {d['tf60']}  {ema_pos_text(d['ep60'])}"),
+        (_blank, _blank),
+        ("trend",
+         f"{d['trend_txt']}  |  adx {d['adx']:.1f}{d['adx_flag']}  "
+         f"di+:{d['dip']:.1f}  di-:{d['dim']:.1f}"),
+        (_blank, _blank),
+        ("strategy", strat),
+    ]
+    if prev_strat:
+        fields += [(_blank, _blank), ("previous strategy", prev_strat)]
+    send_discord(build_embed(tag, label, trend_state, fields))
 
 
 def run_all(symbol_labels, send_alert, note, prev_strategies, prev_trends, prev_adx):
@@ -380,7 +422,7 @@ def run_all(symbol_labels, send_alert, note, prev_strategies, prev_trends, prev_
                 if open_bar or first_run:
                     tag = "📈 OPEN" if open_bar else "📈 START"
                     logging.info("open alert %s — %s", label, strategy)
-                    _discord_full(label, tag, strategy, None, d)
+                    _discord_full(label, tag, strategy, None, d, trend_state)
 
                 else:
                     # trend change — highest priority non-open alert
@@ -388,24 +430,27 @@ def run_all(symbol_labels, send_alert, note, prev_strategies, prev_trends, prev_
                         old_t = trend_text(prev_t)
                         new_t = trend_text(trend_state)
                         tag   = f"📊 TREND: {old_t} → {new_t}"
-                        logging.info("trend change %s: %s → %s  strat: %s",
+                        logging.info("trend change %s: %s → %s  strategy: %s",
                                      label, old_t, new_t, strategy)
-                        _discord_full(label, tag, strategy, prev_s, d)
+                        _discord_full(label, tag, strategy, prev_s, d, trend_state)
 
                     # adx momentum flip — fires independently of trend change
                     if adx_flipped:
+                        implication = ("credit spreads unlocked" if adx_trending
+                                       else "credit spreads locked — prefer debits")
                         adx_tag = (f"⚡ ADX TRENDING ({d['adx']:.1f} ≥ {adx_trend_th:.0f})"
                                    if adx_trending else
                                    f"⚡ ADX FLAT ({d['adx']:.1f} < {adx_trend_th:.0f})")
-                        implication = ("credit spreads unlocked" if adx_trending
-                                       else "credit spreads locked — prefer debits")
-                        msg = (f"**SP | {label} | {adx_tag}**\n"
-                               f"trend: {d['trend_txt']}  |  adx {d['adx']:.1f}{d['adx_flag']}  "
-                               f"di+:{d['dip']:.1f} di-:{d['dim']:.1f}\n"
-                               f"→ {implication}\n"
-                               f"**strat: {strategy}**\n"
-                               f"vix: {d['vix']:.2f}")
-                        send_discord(msg)
+                        fields = [
+                            ("trend",
+                             f"{d['trend_txt']}  |  adx {d['adx']:.1f}{d['adx_flag']}  "
+                             f"di+:{d['dip']:.1f}  di-:{d['dim']:.1f}"),
+                            (_blank, _blank),
+                            ("momentum", implication),
+                            (_blank, _blank),
+                            ("strategy", strategy),
+                        ]
+                        send_discord(build_embed(adx_tag, label, trend_state, fields))
                         logging.info("adx flip %s: %s → %s  adx=%.1f  %s",
                                      label,
                                      "trending" if prev_a else "flat",
@@ -415,8 +460,8 @@ def run_all(symbol_labels, send_alert, note, prev_strategies, prev_trends, prev_
                     # strategy changed without a trend or adx flip
                     elif strat_changed and not trend_changed:
                         tag = "🔄 STRATEGY CHANGED"
-                        logging.info("strat change %s: %s → %s", label, prev_s, strategy)
-                        _discord_full(label, tag, strategy, prev_s, d)
+                        logging.info("strategy change %s: %s → %s", label, prev_s, strategy)
+                        _discord_full(label, tag, strategy, prev_s, d, trend_state)
 
             prev_strategies[label] = strategy
             prev_trends[label]     = trend_state
@@ -429,7 +474,7 @@ def run_all(symbol_labels, send_alert, note, prev_strategies, prev_trends, prev_
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="strategy-picker v2.1 — options strategy router")
+    parser = argparse.ArgumentParser(description=f"strategy-picker v{VERSION} — options strategy router")
     parser.add_argument("--tickers", "-t",  nargs="+", type=str, default=None,
                         help="symbols to run (e.g. SPX QQQ ES NQ); defaults to SPX + QQQ")
     parser.add_argument("--run", "-r",      choices=["once", "continuous"], default="once",
