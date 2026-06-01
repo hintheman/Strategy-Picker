@@ -3,9 +3,18 @@
 # all variable and function names are lowercase
 
 import argparse
-import yfinance as yf
+import glob
+import logging
+import logging.handlers
+import math
+import os
+import time
+from datetime import datetime, date, timedelta
+from zoneinfo import ZoneInfo
+
 import pandas as pd
 import requests
+import yfinance as yf
 from ta.trend import MACD, EMAIndicator, ADXIndicator
 
 # ─── inputs ────────────────────────────────────────────────────────────────────
@@ -38,6 +47,69 @@ use_60m_bias       = True
 tickers      = ["^GSPC", "QQQ"]
 discord_url  = "https://discord.com/api/webhooks/1510324247023587399/z_cQLOeCiOIGW31CnRvcnSlMgkoUPExGSePjReP4CUcrWf39jx-Rv-6_YT5dSdxcKt1L"
 
+# futures / known-name ticker map
+ticker_map = {
+    "SPX":  "^GSPC",
+    "ES":   "ES=F",
+    "NQ":   "NQ=F",
+    "MES":  "MES=F",
+    "MNQ":  "MNQ=F",
+    "YM":   "YM=F",
+    "RTY":  "RTY=F",
+    "CL":   "CL=F",
+    "GC":   "GC=F",
+    "BTC":  "BTC=F",
+    "ETH":  "ETH=F",
+}
+
+# display labels (what to show in output / discord)
+label_map = {
+    "^GSPC": "SPX",
+    "ES=F":  "ES",
+    "NQ=F":  "NQ",
+    "MES=F": "MES",
+    "MNQ=F": "MNQ",
+}
+
+# ─── logging ──────────────────────────────────────────────────────────────────
+
+log_dir         = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+log_retain_days = 30
+ET              = ZoneInfo("America/New_York")
+
+
+def _purge_old_logs():
+    cutoff = datetime.now() - timedelta(days=log_retain_days)
+    for path in glob.glob(os.path.join(log_dir, "*.log")):
+        try:
+            if datetime.fromtimestamp(os.path.getmtime(path)) < cutoff:
+                os.remove(path)
+        except OSError:
+            pass
+
+
+def setup_logging(debug: bool = False):
+    os.makedirs(log_dir, exist_ok=True)
+    _purge_old_logs()
+    log_path = os.path.join(log_dir, f"{date.today().isoformat()}.log")
+    fmt      = "%(asctime)s %(levelname)-8s %(message)s"
+    datefmt  = "%Y-%m-%d %H:%M:%S"
+    root     = logging.getLogger()
+    root.setLevel(logging.DEBUG)
+    root.handlers.clear()
+    fh = logging.handlers.TimedRotatingFileHandler(
+        log_path, when="midnight", interval=1,
+        backupCount=log_retain_days, utc=False, encoding="utf-8")
+    fh.suffix = "%Y-%m-%d"
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(logging.Formatter(fmt, datefmt))
+    root.addHandler(fh)
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.DEBUG if debug else logging.INFO)
+    ch.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s", "%H:%M:%S"))
+    root.addHandler(ch)
+    logging.info("log → %s  (retain %d days)", log_path, log_retain_days)
+
 # ─── discord alert ─────────────────────────────────────────────────────────────
 
 def send_discord(msg):
@@ -48,8 +120,13 @@ def send_discord(msg):
 
 # ─── data fetching ─────────────────────────────────────────────────────────────
 
+def resolve(symbol):
+    """map friendly name to yfinance symbol."""
+    return ticker_map.get(symbol.upper(), symbol)
+
 def fetch(symbol, interval, period="5d"):
-    df = yf.download(symbol, interval=interval, period=period,
+    yf_sym = resolve(symbol)
+    df = yf.download(yf_sym, interval=interval, period=period,
                      progress=False, auto_adjust=True)
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
@@ -218,21 +295,13 @@ def run(symbol="^GSPC", label=None, send_alert=True, note=None):
     tf15_txt = "bull ▲" if s15 == 1 else "bear ▼" if s15 == -1 else "neutral"
     tf60_txt = "bull ▲" if s60 == 1 else "bear ▼" if s60 == -1 else "neutral"
 
-    print(f"\nstrategy picker — {display}")
-    print("─" * 54)
-    print(f"  5m    : {tf5_txt:<12}  {ema_pos_text(ep5)}")
-    print(f"  15m   : {tf15_txt:<12}  {ema_pos_text(ep15)}")
-    print(f"  60m   : {tf60_txt:<12}  {ema_pos_text(ep60)}")
-    print(f"  trend : {trend_text(trend_state):<12}  "
-          f"adx {adx_val:.1f}{'🔥' if adx_trending else ' –'}  "
-          f"di+:{dip_val:.1f} di-:{dim_val:.1f}")
-    print(f"  strat : {strategy}")
-    print(f"  vix   : {vix:.2f}")
-    print("─" * 54)
+    logging.info("sp | %-6s | %-12s | adx %.1f%s | vix %.2f | 5m:%-8s 15m:%-8s 60m:%s",
+                 display, strategy[:30], adx_val, "🔥" if adx_trending else " –",
+                 vix, tf5_txt, tf15_txt, tf60_txt)
 
     if send_alert:
         adx_flag  = "🔥" if adx_trending else "–"
-        tag       = f"MANUAL — {note}" if note else "OPEN"
+        tag       = f"MANUAL — {note}" if note else "15m BAR"
         note_line = f"\n> {note}" if note else ""
         msg = (f"**SP | {display} | {tag}**{note_line}\n"
                f"5m: {tf5_txt}  {ema_pos_text(ep5)}\n"
@@ -242,28 +311,87 @@ def run(symbol="^GSPC", label=None, send_alert=True, note=None):
                f"**strat: {strategy}**\n"
                f"vix: {vix:.2f}")
         send_discord(msg)
-        print("  → alert sent to discord")
+        logging.info("  → discord sent (%s)", display)
 
     return strategy
 
 
+# ─── continuous run helpers ───────────────────────────────────────────────────
+
+bar_secs = 15 * 60   # 15-minute bars
+
+
+def secs_to_next_bar():
+    """seconds until the next 15m bar close, plus 5s for data propagation."""
+    now  = time.time()
+    next_bar = math.ceil(now / bar_secs) * bar_secs
+    return max(5, next_bar - now + 5)
+
+
+def run_all(symbol_labels, send_alert, note, prev_strategies):
+    """run one scan across all symbols; return updated prev_strategies dict."""
+    for symbol, label in symbol_labels:
+        try:
+            strategy = run(symbol, label=label, send_alert=False, note=note)
+            prev = prev_strategies.get(label)
+            changed = prev is not None and strategy != prev
+            first   = prev is None
+
+            if send_alert and (first or changed):
+                tag = "OPEN" if first else "STRATEGY CHANGED"
+                if changed:
+                    logging.info("strategy change %-6s: %s → %s", label, prev, strategy)
+                adx_flag = "🔥" if strategy else "–"
+                msg = (f"**SP | {label} | {tag}**\n"
+                       f"**strat: {strategy}**\n"
+                       f"prev: {prev or '—'}")
+                send_discord(msg)
+
+            prev_strategies[label] = strategy
+        except Exception as e:
+            logging.error("✗ %s: %s", label, e)
+    return prev_strategies
+
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--note", "-n", type=str, default=None,
-                        help="optional context label for the discord post (e.g. 'after fed news')")
-    parser.add_argument("--no-discord", action="store_true",
-                        help="print locally only, do not post to discord")
-    parser.add_argument("--tickers", "-t", nargs="+", type=str, default=None,
-                        help="tickers to run (e.g. --tickers AMD NVDA QCOM); defaults to SPX + QQQ")
+    parser = argparse.ArgumentParser(description="strategy-picker v2.1 — options strategy router")
+    parser.add_argument("--tickers", "-t",  nargs="+", type=str, default=None,
+                        help="symbols to run (e.g. SPX QQQ ES NQ); defaults to SPX + QQQ")
+    parser.add_argument("--run", "-r",      choices=["once", "continuous"], default="once",
+                        help="once=run now (default); continuous=loop every 15m bar")
+    parser.add_argument("--note", "-n",     type=str, default=None,
+                        help="context label for discord post (manual runs)")
+    parser.add_argument("--no-discord",     action="store_true",
+                        help="print locally only, skip discord")
+    parser.add_argument("--debug",          action="store_true",
+                        help="print debug to console (always written to log file)")
     args = parser.parse_args()
 
+    setup_logging(args.debug)
+
     if args.tickers:
-        symbol_labels = [(t.upper(), t.upper()) for t in args.tickers]
+        raw = [(t.upper(), label_map.get(resolve(t.upper()), t.upper())) for t in args.tickers]
+        symbol_labels = [(resolve(s), lbl) for s, lbl in raw]
     else:
         symbol_labels = [("^GSPC", "SPX"), ("QQQ", "QQQ")]
 
-    for symbol, label in symbol_labels:
-        try:
-            run(symbol, label=label, note=args.note, send_alert=not args.no_discord)
-        except Exception as e:
-            print(f"\n  ✗ {label}: skipped — {e}")
+    send_alert = not args.no_discord
+
+    if args.run == "once":
+        for symbol, label in symbol_labels:
+            try:
+                run(symbol, label=label, note=args.note, send_alert=send_alert)
+            except Exception as e:
+                logging.error("✗ %s: %s", label, e)
+
+    else:  # continuous
+        logging.info("continuous mode — 15m bars — symbols: %s",
+                     [lbl for _, lbl in symbol_labels])
+        prev = {}
+        while True:
+            prev = run_all(symbol_labels, send_alert, args.note, prev)
+            secs = secs_to_next_bar()
+            logging.info("next bar in %.0fs  (%s ET)",
+                         secs, datetime.fromtimestamp(time.time() + secs,
+                         tz=ET).strftime("%H:%M:%S"))
+            time.sleep(secs)
