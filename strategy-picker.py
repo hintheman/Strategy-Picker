@@ -11,7 +11,7 @@ import logging.handlers
 import math
 import os
 import time
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, UTC
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -47,7 +47,9 @@ use_iron_butterfly = True
 use_60m_bias       = True
 
 tickers      = ["^GSPC", "QQQ"]
-discord_url  = "https://discord.com/api/webhooks/1510324247023587399/z_cQLOeCiOIGW31CnRvcnSlMgkoUPExGSePjReP4CUcrWf39jx-Rv-6_YT5dSdxcKt1L"
+
+# webhook needs to be defined in env"
+discord_url  = os.getenv("DISCORD_WEBHOOK_STRATEGY", "undefined")
 
 # futures / known-name ticker map
 ticker_map = {
@@ -81,10 +83,10 @@ ET              = ZoneInfo("America/New_York")
 
 
 def _purge_old_logs():
-    cutoff = datetime.now() - timedelta(days=log_retain_days)
+    cutoff = datetime.now(UTC) - timedelta(days=log_retain_days)
     for path in glob.glob(os.path.join(log_dir, "*.log")):
         try:
-            if datetime.fromtimestamp(os.path.getmtime(path)) < cutoff:
+            if datetime.fromtimestamp(os.path.getmtime(path), UTC) < cutoff:
                 os.remove(path)
         except OSError:
             pass
@@ -139,11 +141,11 @@ def build_embed(tag, label, trend_state, fields, footer=None, color=None):
     title   = f"strategy-picker v{VERSION} | {label} | {tag}"
     color   = color if color is not None else embed_color.get(trend_state, embed_color[0])
     embed   = {
-        "title":  title,
-        "color":  color,
+        "title": title,
+        "color": color,
         "fields": [{"name": k, "value": v, "inline": False} for k, v in fields],
         "footer": {"text": footer or f"tastydaytraders | strategy-picker v{VERSION} | {now_str}"},
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
     }
     return {"embeds": [embed]}
 
@@ -355,7 +357,6 @@ def run(symbol="^GSPC", label=None, send_alert=True, note=None):
         "adx": adx_val, "adx_flag": adx_flag,
         "dip": dip_val, "dim": dim_val, "vix": vix,
     }
-
 
 # ─── continuous run helpers ───────────────────────────────────────────────────
 
